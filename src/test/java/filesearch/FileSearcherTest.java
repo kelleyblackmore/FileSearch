@@ -123,6 +123,60 @@ class FileSearcherTest {
     }
 
     @Test
+    void symlinkedRootIsSearched() throws IOException {
+        Path link = Files.createSymbolicLink(root.resolveSibling(root.getFileName() + "-link"), root);
+        try {
+            assertEquals(Set.of("Main.java", "Util.java"),
+                    names(SearchCriteria.builder(link).namePattern("*.java").build()));
+        } finally {
+            Files.delete(link);
+        }
+    }
+
+    @Test
+    void symlinkedFilesAreIncluded() throws IOException {
+        Files.createSymbolicLink(root.resolve("link.java"), root.resolve("Main.java"));
+        List<SearchResult> results = searcher.search(
+                SearchCriteria.builder(root).namePattern("link*").contentQuery("TODO").build());
+        assertEquals(1, results.size());
+        assertEquals(2, results.get(0).matches().get(0).lineNumber());
+    }
+
+    @Test
+    void bracketsInNameAreLiteralWithoutWildcards() throws IOException {
+        write("report[1].txt", "x");
+        write("{draft.txt", "x");
+        assertEquals(Set.of("report[1].txt"), names(SearchCriteria.builder(root).namePattern("report[1]").build()));
+        assertEquals(Set.of("{draft.txt"), names(SearchCriteria.builder(root).namePattern("{draft").build()));
+    }
+
+    @Test
+    void largeFilesAreReportedAsSkippedForContent() throws IOException {
+        List<Path> skipped = new java.util.ArrayList<>();
+        FileSearcher.Summary s = searcher.search(
+                SearchCriteria.builder(root).contentQuery("hello").maxContentSize(5).build(),
+                new FileSearcher.Listener() {
+                    @Override
+                    public void onResult(SearchResult r) {
+                    }
+
+                    @Override
+                    public void onSkipped(Path path, long size) {
+                        skipped.add(path);
+                    }
+                }, () -> false);
+        assertEquals(0, s.matches());
+        assertEquals(skipped.size(), s.skipped());
+        assertTrue(s.skipped() >= 2);
+    }
+
+    @Test
+    void searchCompletedWithoutCancelIsNotReportedCancelled() throws IOException {
+        FileSearcher.Summary s = searcher.search(SearchCriteria.builder(root).build(), r -> { }, () -> false);
+        assertEquals(false, s.cancelled());
+    }
+
+    @Test
     void missingRootFails() {
         assertThrows(NoSuchFileException.class,
                 () -> searcher.search(SearchCriteria.builder(root.resolve("nope")).build()));

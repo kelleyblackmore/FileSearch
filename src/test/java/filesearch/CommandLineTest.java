@@ -57,6 +57,7 @@ class CommandLineTest {
         assertTrue(err.toString(StandardCharsets.UTF_8).contains("Unknown option"));
         assertEquals(2, run("-n"));
         assertEquals(2, run(root.resolve("missing").toString()));
+        assertEquals(2, run("-"));
     }
 
     @Test

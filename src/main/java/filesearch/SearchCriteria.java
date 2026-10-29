@@ -19,7 +19,7 @@ import java.util.regex.PatternSyntaxException;
  * <ul>
  *   <li>empty: every file matches</li>
  *   <li>{@code regex == true}: a regular expression that must match part of the file name</li>
- *   <li>contains {@code *}, {@code ?}, <code>[</code> or <code>{</code>: a glob, e.g. {@code *.java}</li>
+ *   <li>contains {@code *} or {@code ?}: a glob, e.g. {@code *.java} or {@code *.{txt,md}}</li>
  *   <li>otherwise: a plain substring of the file name</li>
  * </ul>
  * The content query is a substring, or a regular expression when {@code regex == true}.
@@ -118,7 +118,8 @@ public final class SearchCriteria {
     }
 
     private static boolean isGlob(String s) {
-        return s.indexOf('*') >= 0 || s.indexOf('?') >= 0 || s.indexOf('[') >= 0 || s.indexOf('{') >= 0;
+        // Only wildcards make a glob, so names like "report[1]" still work as substrings.
+        return s.indexOf('*') >= 0 || s.indexOf('?') >= 0;
     }
 
     /** Whether a file name passes the name pattern and extension filter. */

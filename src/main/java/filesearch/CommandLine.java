@@ -7,7 +7,8 @@ import java.nio.file.Path;
 /**
  * Command-line front end. Prints matching paths, or {@code path:line: text} for content matches.
  *
- * <p>Exit status: 0 if anything matched, 1 if nothing matched, 2 on usage or I/O errors.
+ * <p>Exit status: 0 if anything matched, 1 if nothing matched, 2 on usage errors or if any
+ * file or directory could not be read (like {@code grep}, even when other files matched).
  */
 public final class CommandLine {
 
@@ -27,10 +28,14 @@ public final class CommandLine {
               -d, --max-depth N       descend at most N directory levels
                   --min-size BYTES    minimum file size (suffixes K, M, G allowed)
                   --max-size BYTES    maximum file size (suffixes K, M, G allowed)
+                  --max-content-size BYTES
+                                      skip content search in larger files (default 50M)
               -l, --files-only        with -c, print only file names, not matching lines
               -q, --quiet             do not report unreadable files
                   --gui               open the graphical interface
               -h, --help              show this help
+
+            Exit status is 0 if a file matched, 1 if none did, and 2 on errors.
             """;
 
     private final PrintStream out;
@@ -56,6 +61,7 @@ public final class CommandLine {
             int maxDepth = Integer.MAX_VALUE;
             long minSize = 0;
             long maxSize = Long.MAX_VALUE;
+            long maxContentSize = SearchCriteria.DEFAULT_MAX_CONTENT_SIZE;
 
             for (int i = 0; i < args.length; i++) {
                 String a = args[i];
@@ -74,10 +80,11 @@ public final class CommandLine {
                     case "-d", "--max-depth" -> maxDepth = parseInt(value(args, ++i, a), a);
                     case "--min-size" -> minSize = parseSize(value(args, ++i, a));
                     case "--max-size" -> maxSize = parseSize(value(args, ++i, a));
+                    case "--max-content-size" -> maxContentSize = parseSize(value(args, ++i, a));
                     case "-l", "--files-only" -> filesOnly = true;
                     case "-q", "--quiet" -> quiet = true;
                     default -> {
-                        if (a.startsWith("-") && !a.equals("-")) {
+                        if (a.startsWith("-")) {
                             throw new IllegalArgumentException("Unknown option: " + a);
                         }
                         if (dir != null) {
@@ -98,6 +105,7 @@ public final class CommandLine {
                     .maxDepth(maxDepth)
                     .minSize(minSize)
                     .maxSize(maxSize)
+                    .maxContentSize(maxContentSize)
                     .build();
         } catch (IllegalArgumentException e) {
             err.println("filesearch: " + e.getMessage());
@@ -126,7 +134,18 @@ public final class CommandLine {
                         err.println("filesearch: cannot read " + path + ": " + describe(error));
                     }
                 }
+
+                @Override
+                public void onSkipped(Path path, long size) {
+                    if (reportErrors) {
+                        err.println("filesearch: skipped content of " + path + " (" + size
+                                + " bytes, see --max-content-size)");
+                    }
+                }
             }, () -> false);
+            if (summary.errors() > 0) {
+                return 2;
+            }
             return summary.matches() > 0 ? 0 : 1;
         } catch (IOException e) {
             err.println("filesearch: " + describe(e));

@@ -19,6 +19,7 @@ import java.awt.event.MouseEvent;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.time.ZoneId;
@@ -298,7 +299,13 @@ public final class SearchFrame extends JFrame {
             error("Please choose a folder to search.");
             return;
         }
-        Path dir = Path.of(dirText);
+        Path dir;
+        try {
+            dir = Path.of(dirText);
+        } catch (InvalidPathException e) {
+            error("Invalid folder name:\n" + e.getMessage());
+            return;
+        }
         if (!Files.isDirectory(dir)) {
             error("Folder not found:\n" + dir);
             return;
@@ -405,9 +412,14 @@ public final class SearchFrame extends JFrame {
 
         @Override
         protected void process(List<SearchResult> chunks) {
+            // Chunks can arrive after a newer search has started; they belong to the old one.
+            if (worker != this) {
+                return;
+            }
             model.addAll(chunks);
             long now = System.currentTimeMillis();
-            if (now - lastStatusUpdate > 100 && !stop.get()) {
+            // process() may also run after done(); don't overwrite the final status then.
+            if (now - lastStatusUpdate > 100 && !stop.get() && !isDone()) {
                 lastStatusUpdate = now;
                 Path dir = currentDir.get();
                 statusLabel.setText(model.getRowCount() + " found — searching "
@@ -417,6 +429,9 @@ public final class SearchFrame extends JFrame {
 
         @Override
         protected void done() {
+            if (worker != this) {
+                return;
+            }
             setSearching(false);
             try {
                 FileSearcher.Summary s = get();
@@ -427,7 +442,10 @@ public final class SearchFrame extends JFrame {
                         .append(" found, ").append(s.filesScanned()).append(" scanned in ")
                         .append(String.format("%.1f s", secs));
                 if (s.errors() > 0) {
-                    msg.append(" (").append(s.errors()).append(" could not be read)");
+                    msg.append(", ").append(s.errors()).append(" could not be read");
+                }
+                if (s.skipped() > 0) {
+                    msg.append(", ").append(s.skipped()).append(" too large to search for text");
                 }
                 statusLabel.setText(msg.toString());
             } catch (CancellationException e) {

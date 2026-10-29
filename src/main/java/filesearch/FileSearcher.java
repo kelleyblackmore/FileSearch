@@ -38,10 +38,18 @@ public final class FileSearcher {
         /** Called when a file or directory could not be read. The search continues. */
         default void onError(Path path, IOException error) {
         }
+
+        /** Called when a file matched by name was too large to search for content. */
+        default void onSkipped(Path path, long size) {
+        }
     }
 
-    /** Totals for a finished (or cancelled) search. */
-    public record Summary(int filesScanned, int matches, int errors, boolean cancelled) {
+    /**
+     * Totals for a finished (or cancelled) search.
+     *
+     * @param skipped files not searched for content because they exceed the size limit
+     */
+    public record Summary(int filesScanned, int matches, int errors, int skipped, boolean cancelled) {
     }
 
     /** Bytes inspected to decide whether a file is binary. */
@@ -68,10 +76,12 @@ public final class FileSearcher {
         if (!Files.isDirectory(root)) {
             throw new NotDirectoryException(root.toString());
         }
+        // Resolve symlinks so a linked root folder (e.g. /tmp on macOS) is walked, not skipped.
+        root = root.toRealPath();
 
         Visitor visitor = new Visitor(criteria, root, listener, cancelled);
         Files.walkFileTree(root, EnumSet.noneOf(FileVisitOption.class), criteria.maxDepth(), visitor);
-        return new Summary(visitor.scanned, visitor.matches, visitor.errors, cancelled.getAsBoolean());
+        return new Summary(visitor.scanned, visitor.matches, visitor.errors, visitor.skipped, visitor.stopped);
     }
 
     /** Convenience overload that collects all results into a list. */
@@ -89,6 +99,8 @@ public final class FileSearcher {
         int scanned;
         int matches;
         int errors;
+        int skipped;
+        boolean stopped;
 
         Visitor(SearchCriteria criteria, Path root, Listener listener, BooleanSupplier cancelled) {
             this.criteria = criteria;
@@ -97,9 +109,17 @@ public final class FileSearcher {
             this.cancelled = cancelled;
         }
 
+        private FileVisitResult continueUnlessCancelled() {
+            if (cancelled.getAsBoolean()) {
+                stopped = true;
+                return FileVisitResult.TERMINATE;
+            }
+            return FileVisitResult.CONTINUE;
+        }
+
         @Override
         public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
-            if (cancelled.getAsBoolean()) {
+            if (continueUnlessCancelled() == FileVisitResult.TERMINATE) {
                 return FileVisitResult.TERMINATE;
             }
             if (!dir.equals(root) && !criteria.includeHidden() && isHidden(dir)) {
@@ -111,8 +131,16 @@ public final class FileSearcher {
 
         @Override
         public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-            if (cancelled.getAsBoolean()) {
+            if (continueUnlessCancelled() == FileVisitResult.TERMINATE) {
                 return FileVisitResult.TERMINATE;
+            }
+            if (attrs.isSymbolicLink()) {
+                // Include symlinked files, but never follow links to directories (avoids loops).
+                try {
+                    attrs = Files.readAttributes(file, BasicFileAttributes.class);
+                } catch (IOException e) {
+                    return visitFileFailed(file, e);
+                }
             }
             // Directories at the depth limit and special files are reported here too; skip them.
             if (!attrs.isRegularFile()) {
@@ -130,13 +158,18 @@ public final class FileSearcher {
             List<SearchResult.LineMatch> lines = List.of();
             if (criteria.hasContentQuery()) {
                 if (attrs.size() > criteria.maxContentSize()) {
+                    skipped++;
+                    listener.onSkipped(file, attrs.size());
                     return FileVisitResult.CONTINUE;
                 }
                 try {
                     lines = findInContent(file, criteria.contentPattern(), cancelled);
                 } catch (IOException e) {
-                    visitFileFailed(file, e);
-                    return FileVisitResult.CONTINUE;
+                    return visitFileFailed(file, e);
+                }
+                // A scan interrupted by cancellation is incomplete; don't report it.
+                if (continueUnlessCancelled() == FileVisitResult.TERMINATE) {
+                    return FileVisitResult.TERMINATE;
                 }
                 if (lines.isEmpty()) {
                     return FileVisitResult.CONTINUE;
@@ -153,7 +186,7 @@ public final class FileSearcher {
             // Permission problems and files vanishing mid-search are expected; keep going.
             errors++;
             listener.onError(file, exc);
-            return cancelled.getAsBoolean() ? FileVisitResult.TERMINATE : FileVisitResult.CONTINUE;
+            return continueUnlessCancelled();
         }
 
         @Override
@@ -162,7 +195,7 @@ public final class FileSearcher {
                 errors++;
                 listener.onError(dir, exc);
             }
-            return cancelled.getAsBoolean() ? FileVisitResult.TERMINATE : FileVisitResult.CONTINUE;
+            return continueUnlessCancelled();
         }
     }
 

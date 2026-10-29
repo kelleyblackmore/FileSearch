@@ -6,7 +6,7 @@ A Java desktop and command-line tool for finding files by name, extension, size 
 
 ## Features
 
-- **Name matching**: plain substring (`report`), glob (`*.java`, `test_*.{txt,md}`) or regular expression.
+- **Name matching**: plain substring (`report`), glob (`*.java`, `test_*.{txt,md}`; any pattern containing `*` or `?`) or regular expression. Symlinked files are included.
 - **Content search**: shows every matching line with its line number. Binary files are skipped, and files that are not valid UTF-8 are read as ISO-8859-1.
 - **Filters**: extensions, minimum and maximum size, maximum depth, case sensitivity, and whether to include hidden files.
 - **Responsive GUI**: the search runs in the background, results appear as they are found, and you can stop it at any time with the Stop button or Esc. Double-click a result to open it, or right-click to open its folder or copy its path.
@@ -46,7 +46,7 @@ java -jar target/filesearch.jar -s -c TODO -e java,kt .
 java -jar target/filesearch.jar -l -r -c "user(Id|Name)" --max-size 1M -d 3 ~/projects
 ```
 
-Run `java -jar target/filesearch.jar --help` to see all options. The exit status is 0 when something matched, 1 when nothing did, and 2 on errors.
+Run `java -jar target/filesearch.jar --help` to see all options. The exit status is 0 when something matched, 1 when nothing did, and 2 on errors, including files that could not be read. Files over 50 MB are not searched for text; you are warned about each one, and `--max-content-size` raises the limit.
 
 ## Project layout
 
